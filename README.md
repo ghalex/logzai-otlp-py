@@ -15,38 +15,21 @@ pip install logzai-otlp
 ### Quick start (HTTP OTLP)
 
 ```python
-from logzai_otlp import init, info, error, shutdown
+from logzai_otlp import logzai
 
-init(
-    org="your-org-id",
-    api_key="your-api-key",
+logzai.init(
+    ingest_token="your-ingest-token",
+    ingest_endpoint="https://ingest.logzai.com",  # Base OTLP endpoint
     service_name="orders-api",
     environment="prod",
-    endpoint="https://collector.your-domain.tld/v1/logs",  # OTLP/HTTP endpoint
     protocol="http",  # default
 )
 
-info("User logged in", user_id="123", method="oauth")
-error("Payment failed", order_id="42", reason="card_declined")
+logzai.info("User logged in", user_id="123", method="oauth")
+logzai.error("Payment failed", order_id="42", reason="card_declined")
 
 # optional – logs are flushed automatically at process exit
-shutdown()
-```
-
-### Quick start (gRPC OTLP)
-
-```python
-from logzai_otlp import init, info
-
-init(
-    org="your-org-id",
-    api_key="your-api-key",
-    # gRPC OTLP endpoints are host:port (no path)
-    endpoint="collector.your-domain.tld:4317",
-    protocol="grpc",
-)
-
-info("Started via gRPC", node="worker-1")
+logzai.shutdown()
 ```
 
 ### Using standard `logging`
@@ -55,9 +38,9 @@ This client installs an OpenTelemetry handler on the `logzai` logger. You can us
 
 ```python
 import logging
-from logzai_otlp import init
+from logzai_otlp import logzai
 
-init(org="org", api_key="key")
+logzai.init(ingest_token="your-token", ingest_endpoint="https://ingest.logzai.com")
 
 logger = logging.getLogger("logzai")
 logger.info("Inventory updated", extra={"sku": "A-42", "qty": 3})
@@ -66,39 +49,74 @@ logger.info("Inventory updated", extra={"sku": "A-42", "qty": 3})
 ### API
 
 ```python
-init(
-    org: str,
-    api_key: str,
+logzai.init(
+    ingest_token: str,
+    ingest_endpoint: str = "http://ingest.logzai.com",
+    min_level: int = logging.DEBUG,
     *,
     service_name: str = "app",
+    service_namespace: str = "default",
     environment: str = "prod",
-    endpoint: str = "http://localhost:4318/v1/logs",
     protocol: str = "http",  # "http" | "grpc"
+    mirror_to_console: bool = False,
 ) -> None
 ```
 
-- **org**: Your organization identifier; included in resource attributes
-- **api_key**: Sent as `x-api-key` header for OTLP/HTTP
+- **ingest_token**: Your LogzAI ingest token; sent as `x-ingest-token` header
+- **ingest_endpoint**: Base OTLP collector endpoint (paths `/logs` and `/traces` are appended automatically)
+  - HTTP example: `https://ingest.logzai.com`
+  - gRPC example: `ingest.logzai.com:4317`
+- **min_level**: Minimum logging level (default: `logging.DEBUG`)
 - **service_name**: OpenTelemetry `service.name` resource attribute
+- **service_namespace**: OpenTelemetry `service.namespace` resource attribute  
 - **environment**: OpenTelemetry `deployment.environment` resource attribute
-- **endpoint**: OTLP collector endpoint
-  - HTTP example: `https://collector.example.com/v1/logs`
-  - gRPC example: `collector.example.com:4317`
 - **protocol**: `http` (default) or `grpc`
+- **mirror_to_console**: Also log to console/stdout (default: `False`)
 
 Convenience logging helpers:
 
 ```python
-debug(message: str, **attrs) -> None
-info(message: str, **attrs) -> None
-warning(message: str, **attrs) -> None
-warn(message: str, **attrs) -> None  # alias of warning
-error(message: str, **attrs) -> None
-critical(message: str, **attrs) -> None
-shutdown() -> None  # flush and shutdown provider
+logzai.debug(message: str, exc_info: bool = False, **attrs) -> None
+logzai.info(message: str, exc_info: bool = False, **attrs) -> None
+logzai.warning(message: str, exc_info: bool = False, **attrs) -> None
+logzai.warn(message: str, exc_info: bool = False, **attrs) -> None  # alias of warning
+logzai.error(message: str, exc_info: bool = True, **attrs) -> None
+logzai.critical(message: str, exc_info: bool = True, **attrs) -> None
+logzai.exception(message: str, **attrs) -> None  # logs with full exception info
+logzai.shutdown() -> None  # flush and shutdown provider
 ```
 
-All extra keyword arguments are sent as structured log attributes.
+All extra keyword arguments are sent as structured log attributes. The `exc_info` parameter controls whether exception information is automatically captured when available.
+
+### Tracing
+
+LogzAI now includes distributed tracing capabilities alongside logging:
+
+```python
+from logzai_otlp import logzai
+
+logzai.init(ingest_token="your-token", ingest_endpoint="https://ingest.logzai.com")
+
+# Create spans manually
+span = logzai.start_span("database_query")
+span.set_attribute("table", "users")
+span.end()
+
+# Use context manager for automatic span lifecycle
+with logzai.span("api_request") as span:
+    logzai.info("Processing request", request_id="123")
+    span.set_attribute("method", "GET")
+    span.set_attribute("path", "/api/users")
+    # span ends automatically, even on exceptions
+```
+
+Tracing methods:
+
+```python
+logzai.start_span(name: str, **kwargs) -> Span
+logzai.span(name: str, **kwargs)  # context manager
+logzai.set_span_attribute(span: Span, key: str, value: Any) -> None
+```
 
 ### Requirements
 
