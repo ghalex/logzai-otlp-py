@@ -2,7 +2,7 @@
 import logging
 import traceback
 import sys
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Generator
 from contextlib import contextmanager
 from opentelemetry import trace
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
@@ -160,7 +160,7 @@ class LogzAI(LogzAIBase):
         return self.tracer.start_span(name, **kwargs)
     
     @contextmanager
-    def span(self, name: str, **kwargs):
+    def span(self, name: str, **kwargs) -> Generator[Span, None, None]:
         """Context manager for creating spans."""
         span = self.start_span(name, **kwargs)
         try:
