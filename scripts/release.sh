@@ -10,26 +10,33 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+# Load environment variables from .env file if it exists
+if [[ -f .env ]]; then
+  echo "[release] Loading environment variables from .env..."
+  set -a  # automatically export all variables
+  source .env
+  set +a  # disable automatic export
+fi
+
 REPOSITORY_ARGS=()
 if [[ "${1-}" == "--test" ]]; then
   REPOSITORY_ARGS=(--repository testpypi)
 fi
 
 echo "[release] Ensuring build tooling is installed..."
-python -m pip install --upgrade pip >/dev/null
-python -m pip install --upgrade build twine >/dev/null
+uv add --dev build twine >/dev/null
 
 echo "[release] Cleaning previous build artifacts..."
 rm -rf dist build ./*.egg-info ./.eggs
 
 echo "[release] Building sdist and wheel..."
-python -m build
+uv run python -m build
 
 echo "[release] Verifying artifacts..."
-twine check dist/*
+uv run twine check dist/*
 
 echo "[release] Uploading artifacts with Twine..."
-twine upload "${REPOSITORY_ARGS[@]}" dist/*
+uv run twine upload "${REPOSITORY_ARGS[@]}" dist/*
 
 echo "[release] Done."
 
