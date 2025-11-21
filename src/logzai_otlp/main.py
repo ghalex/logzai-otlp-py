@@ -2,6 +2,8 @@
 import logging
 import traceback
 import sys
+import os
+import socket
 from typing import Optional, Dict, Any, Generator
 from contextlib import contextmanager
 from opentelemetry import trace
@@ -63,18 +65,42 @@ class LogzAI(LogzAIBase):
         environment: str = "prod",
         protocol: str = "http",
         mirror_to_console: bool = False,
+        origin: Optional[str] = None,
     ) -> None:
-        """Initialize LogzAI with both logging and tracing."""
+        """Initialize LogzAI with both logging and tracing.
+        
+        Args:
+            ingest_token: Authentication token for the LogzAI ingest endpoint
+            ingest_endpoint: URL of the LogzAI ingest endpoint
+            min_level: Minimum logging level to capture
+            service_name: Name of the service generating logs/traces
+            service_namespace: Namespace for the service
+            environment: Deployment environment (e.g., 'prod', 'dev', 'staging')
+            protocol: Protocol to use for OTLP export ('http' or 'grpc')
+            mirror_to_console: Whether to also log to console
+            origin: Origin identifier to help the ingestor identify the source
+        """
         self.mirror_to_console = mirror_to_console
         
-        # Create resource
-        resource = Resource.create({
+        # Create resource attributes
+        resource_attrs = {
             "service.name": service_name,
             "service.namespace": service_namespace,
             "deployment.environment": environment,
-        })
+        }
         
+        # Add origin to resource attributes if provided
+        if origin:
+            resource_attrs["origin"] = origin
+        
+        resource = Resource.create(resource_attrs)
+        
+        # Create headers with ingest token
         headers = {"x-ingest-token": ingest_token}
+        
+        # Add origin to headers if provided
+        if origin:
+            headers["x-origin"] = origin
         
         # Setup tracing
         span_processor = BatchSpanProcessor(

@@ -1,3 +1,0 @@
-opentelemetry-sdk
-opentelemetry-exporter-otlp
-opentelemetry-api
