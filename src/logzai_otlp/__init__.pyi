@@ -1,8 +1,13 @@
 # Type stubs for logzai_otlp
 from contextlib import AbstractContextManager
-from typing import Any, Dict, Optional, Generator
+from typing import Any, Dict, Optional, Generator, Callable, Union, TypeVar, Awaitable
 from opentelemetry.trace import Span
 import logging
+
+# Plugin system types
+T = TypeVar('T')
+CleanupFunction = Union[Callable[[], None], Callable[[], Awaitable[None]]]
+LogzAIPlugin = Callable[[LogzAI, Optional[T]], Optional[CleanupFunction]]
 
 class LogzAI:
     def init(
@@ -39,7 +44,15 @@ class LogzAI:
     def start_span(self, name: str, **kwargs: Any) -> Span: ...
     def span(self, name: str, **kwargs: Any) -> AbstractContextManager[Span]: ...
     def set_span_attribute(self, span: Span, key: str, value: Any) -> None: ...
-    
+
+    def plugin(
+        self,
+        name: str,
+        plugin_func: LogzAIPlugin[T],
+        config: Optional[T] = ...
+    ) -> None: ...
+    def unregister_plugin(self, name: str) -> bool: ...
+
     def shutdown(self) -> None: ...
 
 logzai: LogzAI

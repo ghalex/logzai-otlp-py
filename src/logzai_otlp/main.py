@@ -4,7 +4,9 @@ import traceback
 import sys
 import os
 import socket
-from typing import Optional, Dict, Any, Generator
+import threading
+import asyncio
+from typing import Optional, Dict, Any, Generator, TypeVar
 from contextlib import contextmanager
 from opentelemetry import trace
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
@@ -14,18 +16,24 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span, Status, StatusCode
 
+from .plugins import PluginEntry, CleanupFunction, LogzAIPlugin, T
+
 # Remove global variables - using singleton pattern only
 
 
 class LogzAIBase:
     """Base class for LogzAI implementations."""
-    
+
     def __init__(self):
         self.log_provider: Optional[LoggerProvider] = None
         self.tracer_provider: Optional[TracerProvider] = None
         self.logger: Optional[logging.Logger] = None
         self.tracer: Optional[trace.Tracer] = None
         self.mirror_to_console: bool = False
+
+        # Plugin registry
+        self._plugins: Dict[str, PluginEntry] = {}
+        self._plugin_lock: threading.Lock = threading.Lock()
     
     def _make_log_exporter(self, endpoint: str, headers: Dict[str, str], protocol: str = "http"):
         """Create a log exporter based on protocol."""
@@ -199,15 +207,186 @@ class LogzAI(LogzAIBase):
     def set_span_attribute(self, span: Span, key: str, value: Any) -> None:
         """Set an attribute on a span."""
         span.set_attribute(key, value)
-    
+
+    def plugin(
+        self,
+        name: str,
+        plugin_func: LogzAIPlugin[T],
+        config: Optional[T] = None
+    ) -> None:
+        """Register and execute a plugin.
+
+        Args:
+            name: Unique identifier for the plugin
+            plugin_func: Plugin function that receives the LogzAI instance and config
+            config: Optional configuration object passed to the plugin
+
+        Raises:
+            RuntimeError: If LogzAI not initialized
+
+        Example:
+            def my_plugin(instance, config):
+                print(f"Plugin loaded with config: {config}")
+                def cleanup():
+                    print("Cleaning up plugin")
+                return cleanup
+
+            logzai.plugin("my-plugin", my_plugin, {"setting": "value"})
+        """
+        if not self.logger or not self.tracer:
+            raise RuntimeError("LogzAI not initialized. Call logzai.init(...) first.")
+
+        with self._plugin_lock:
+            # Warn if plugin already registered (matches JS behavior)
+            if name in self._plugins:
+                if self.logger:
+                    self.logger.warning(
+                        f"Plugin '{name}' is already registered. Replacing existing plugin.",
+                        extra={"plugin_name": name}
+                    )
+                # Cleanup existing plugin before replacing
+                self._cleanup_plugin(name)
+
+            cleanup_func: Optional[CleanupFunction] = None
+
+            try:
+                # Execute plugin immediately (matches JS behavior)
+                cleanup_func = plugin_func(self, config)
+
+                # Store plugin entry
+                self._plugins[name] = PluginEntry(
+                    name=name,
+                    plugin_func=plugin_func,
+                    cleanup_func=cleanup_func,
+                    config=config
+                )
+
+                if self.logger:
+                    self.logger.debug(
+                        f"Plugin '{name}' registered successfully",
+                        extra={"plugin_name": name, "has_cleanup": cleanup_func is not None}
+                    )
+
+            except Exception as e:
+                # Log error but don't crash (matches JS try-catch behavior)
+                if self.logger:
+                    self.logger.error(
+                        f"Failed to register plugin '{name}': {str(e)}",
+                        extra={"plugin_name": name, "error": str(e)},
+                        exc_info=True
+                    )
+                raise
+
+    def unregister_plugin(self, name: str) -> bool:
+        """Unregister a plugin and call its cleanup function.
+
+        Args:
+            name: Name of the plugin to unregister
+
+        Returns:
+            True if plugin was found and unregistered, False otherwise
+
+        Example:
+            logzai.unregister_plugin("my-plugin")
+        """
+        with self._plugin_lock:
+            if name not in self._plugins:
+                if self.logger:
+                    self.logger.warning(
+                        f"Plugin '{name}' not found",
+                        extra={"plugin_name": name}
+                    )
+                return False
+
+            self._cleanup_plugin(name)
+            del self._plugins[name]
+
+            if self.logger:
+                self.logger.debug(
+                    f"Plugin '{name}' unregistered",
+                    extra={"plugin_name": name}
+                )
+
+            return True
+
+    def _cleanup_plugin(self, name: str) -> None:
+        """Internal helper to cleanup a single plugin.
+
+        Args:
+            name: Name of the plugin to cleanup
+        """
+        if name not in self._plugins:
+            return
+
+        entry = self._plugins[name]
+        if entry.cleanup_func is None:
+            return
+
+        try:
+            # Check if cleanup function is async
+            result = entry.cleanup_func()
+
+            # Handle async cleanup functions
+            if hasattr(result, '__await__'):
+                try:
+                    # Try to get running loop - if we're in an async context, create task
+                    asyncio.get_running_loop()
+                    asyncio.create_task(result)
+                except RuntimeError:
+                    # No running loop, run in new loop
+                    asyncio.run(result)
+
+            if self.logger:
+                self.logger.debug(
+                    f"Plugin '{name}' cleanup completed",
+                    extra={"plugin_name": name}
+                )
+
+        except Exception as e:
+            # Log but don't crash (matches JS behavior)
+            if self.logger:
+                self.logger.error(
+                    f"Error during plugin '{name}' cleanup: {str(e)}",
+                    extra={"plugin_name": name, "error": str(e)},
+                    exc_info=True
+                )
+
+    def _shutdown_plugins(self) -> None:
+        """Cleanup all registered plugins.
+
+        Called during shutdown to ensure proper cleanup of all plugins.
+        Plugins are cleaned up in reverse registration order.
+        """
+        with self._plugin_lock:
+            # Get plugin names in reverse order (LIFO - like JavaScript)
+            plugin_names = list(reversed(self._plugins.keys()))
+
+            for name in plugin_names:
+                try:
+                    self._cleanup_plugin(name)
+                except Exception as e:
+                    # Continue cleanup even if one fails
+                    if self.logger:
+                        self.logger.error(
+                            f"Error during shutdown cleanup of plugin '{name}': {str(e)}",
+                            extra={"plugin_name": name, "error": str(e)},
+                            exc_info=True
+                        )
+
+            # Clear all plugins
+            self._plugins.clear()
+
     def shutdown(self) -> None:
-        """Shutdown both logging and tracing providers."""
+        """Shutdown logging, tracing providers, and all registered plugins."""
+        # Cleanup all plugins first
+        self._shutdown_plugins()
+
         if self.log_provider:
             try:
                 self.log_provider.shutdown()
             except Exception:
                 pass
-        
+
         if self.tracer_provider:
             try:
                 self.tracer_provider.shutdown()

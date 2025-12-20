@@ -118,6 +118,142 @@ logzai.span(name: str, **kwargs)  # context manager
 logzai.set_span_attribute(span: Span, key: str, value: Any) -> None
 ```
 
+### Plugins
+
+LogzAI supports a plugin system that enables framework integrations and custom functionality. Plugins receive the LogzAI instance and can extend logging/tracing behavior.
+
+#### Built-in Plugins
+
+LogzAI includes built-in plugins for popular frameworks:
+
+##### FastAPI Plugin
+
+Automatically logs HTTP requests/responses and creates spans for distributed tracing:
+
+```python
+from fastapi import FastAPI
+from logzai_otlp import logzai, fastapi_plugin
+
+app = FastAPI()
+
+logzai.init(
+    ingest_token="your-token",
+    ingest_endpoint="https://ingest.logzai.com",
+    service_name="my-api"
+)
+
+# Enable FastAPI instrumentation
+logzai.plugin('fastapi', fastapi_plugin, {
+    "app": app,  # Required: your FastAPI app
+    "log_request_body": True,  # Optional: log request bodies
+    "slow_request_threshold_ms": 500  # Optional: warn on slow requests
+})
+
+@app.post("/login")
+async def login(username: str):
+    # All logs here are automatically in the POST /login span
+    logzai.info("User logging in", username=username)
+    return {"status": "ok"}
+
+# Each request creates a span with:
+# - Route: POST /login
+# - Status code, duration, client IP
+# - All logs during request handling
+```
+
+##### PydanticAI Plugin
+
+Automatically logs all agent usage and messages with distributed tracing:
+
+```python
+from logzai_otlp import logzai, pydantic_ai_plugin
+from pydantic_ai import Agent
+
+# Initialize LogzAI
+logzai.init(
+    ingest_token="your-token",
+    ingest_endpoint="https://ingest.logzai.com",
+    service_name="my-ai-app"
+)
+
+# Enable PydanticAI instrumentation
+logzai.plugin('pydantic-ai', pydantic_ai_plugin, {
+    "include_messages": True  # Optional: include full message history
+})
+
+# Use PydanticAI normally - all calls are automatically logged and traced
+agent = Agent('openai:gpt-4', instructions="You are helpful")
+result = await agent.run("Hello!")
+
+# Creates spans for:
+# - Agent execution time (pydantic_ai.agent.run)
+# - Span attributes: agent name, model, provider, token usage
+#
+# Logs will include:
+# - Token usage (input/output/total)
+# - Model and provider info
+# - Full message history (if enabled)
+# - User prompts and responses
+```
+
+#### Creating Custom Plugins
+
+Plugin functions receive the LogzAI instance and optional config, and return an optional cleanup function:
+
+```python
+from typing import Optional
+from logzai_otlp import logzai
+
+def my_plugin(instance, config: Optional[dict] = None):
+    """Plugin receives LogzAI instance and optional config."""
+
+    # Add custom functionality
+    def custom_log(message, **kwargs):
+        instance.info(f"[CUSTOM] {message}", **kwargs)
+
+    instance.custom_log = custom_log
+
+    # Optional: return cleanup function (sync or async)
+    def cleanup():
+        if hasattr(instance, 'custom_log'):
+            delattr(instance, 'custom_log')
+
+    return cleanup
+
+# Initialize and register
+logzai.init(ingest_token="token", ingest_endpoint="https://ingest.logzai.com")
+logzai.plugin("my-plugin", my_plugin, {"enabled": True})
+
+# Use plugin
+logzai.custom_log("Hello from plugin!")
+
+# Cleanup (optional - happens automatically on shutdown)
+logzai.unregister_plugin("my-plugin")
+```
+
+#### Plugin API
+
+```python
+# Register a plugin
+logzai.plugin(
+    name: str,                    # Unique identifier
+    plugin_func: LogzAIPlugin[T], # Plugin function
+    config: Optional[T] = None    # Optional configuration
+) -> None
+
+# Unregister a plugin
+logzai.unregister_plugin(name: str) -> bool
+
+# Plugins are automatically cleaned up on shutdown
+logzai.shutdown()
+```
+
+**Plugin Lifecycle:**
+- Plugins execute immediately upon registration
+- Can return optional cleanup function (sync or async)
+- Cleaned up in reverse order (LIFO) during shutdown
+- Duplicate registration replaces existing plugin with warning
+
 ### Requirements
 
 - Python >= 3.9
