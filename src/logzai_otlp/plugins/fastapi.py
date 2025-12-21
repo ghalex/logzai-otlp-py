@@ -22,6 +22,8 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
             - app: FastAPI application instance (required)
             - log_request_body: bool (default: False) - log request body
             - log_response_body: bool (default: False) - log response body
+            - log_request_headers: bool (default: False) - log all request headers
+            - log_response_headers: bool (default: False) - log all response headers
             - slow_request_threshold_ms: int (default: 1000) - log warning for slow requests
 
     Returns:
@@ -41,6 +43,8 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
         logzai.plugin('fastapi', fastapi_plugin, {
             "app": app,
             "log_request_body": True,
+            "log_request_headers": True,
+            "log_response_headers": True,
             "slow_request_threshold_ms": 500
         })
 
@@ -68,6 +72,8 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
     app: FastAPI = config["app"]
     log_request_body = config.get("log_request_body", False)
     log_response_body = config.get("log_response_body", False)
+    log_request_headers = config.get("log_request_headers", False)
+    log_response_headers = config.get("log_response_headers", False)
     slow_threshold_ms = config.get("slow_request_threshold_ms", 1000)
 
     class LogzAIMiddleware(BaseHTTPMiddleware):
@@ -85,8 +91,8 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                 if route and hasattr(route, "path"):
                     route_name = f"{method} {route.path}"
 
-            # Create span for this request
-            with instance.span(f"http.request") as span:
+            # Create span for this request with method and route
+            with instance.span(route_name) as span:
                 # Set span attributes
                 span.set_attribute("http.method", method)
                 span.set_attribute("http.route", path)
@@ -102,6 +108,13 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                 user_agent = request.headers.get("user-agent", "")
                 if user_agent:
                     span.set_attribute("http.user_agent", user_agent)
+
+                # Capture all request headers if enabled
+                if log_request_headers:
+                    for header_name, header_value in request.headers.items():
+                        # Normalize header name: lowercase and replace hyphens with underscores
+                        normalized_name = header_name.lower().replace("-", "_")
+                        span.set_attribute(f"http.request.header.{normalized_name}", header_value)
 
                 # Start timing
                 start_time = time.time()
@@ -128,45 +141,48 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                     span.set_attribute("http.status_code", response.status_code)
                     span.set_attribute("http.duration_ms", round(duration_ms, 2))
 
-                    # Determine log level based on status code and duration
+                    # Capture all response headers if enabled
+                    if log_response_headers:
+                        for header_name, header_value in response.headers.items():
+                            # Normalize header name: lowercase and replace hyphens with underscores
+                            normalized_name = header_name.lower().replace("-", "_")
+                            span.set_attribute(f"http.response.header.{normalized_name}", header_value)
+
+                    # Log only for errors or slow requests
                     is_error = response.status_code >= 400
                     is_slow = duration_ms >= slow_threshold_ms
 
-                    # Prepare log data
-                    log_data = {
-                        "event": "http.request",
-                        "http_method": method,
-                        "http_route": path,
-                        "http_status": response.status_code,
-                        "duration_ms": round(duration_ms, 2),
-                    }
+                    if is_error or is_slow:
+                        # Prepare log data
+                        log_data = {
+                            "event": "http.request",
+                            "http_method": method,
+                            "http_route": path,
+                            "http_status": response.status_code,
+                            "duration_ms": round(duration_ms, 2),
+                        }
 
-                    # Add optional data
-                    if request.client:
-                        log_data["client_ip"] = request.client.host
+                        # Add optional data
+                        if request.client:
+                            log_data["client_ip"] = request.client.host
 
-                    if user_agent:
-                        log_data["user_agent"] = user_agent
+                        if user_agent:
+                            log_data["user_agent"] = user_agent
 
-                    if request_body:
-                        log_data["request_body"] = request_body
+                        if request_body:
+                            log_data["request_body"] = request_body
 
-                    # Log based on status and performance
-                    if is_error:
-                        instance.error(
-                            f"{route_name} - {response.status_code}",
-                            **log_data
-                        )
-                    elif is_slow:
-                        instance.warning(
-                            f"{route_name} - slow request ({round(duration_ms, 0)}ms)",
-                            **log_data
-                        )
-                    else:
-                        instance.info(
-                            f"{route_name} - {response.status_code}",
-                            **log_data
-                        )
+                        # Log based on status and performance
+                        if is_error:
+                            instance.error(
+                                f"{route_name} - {response.status_code}",
+                                **log_data
+                            )
+                        elif is_slow:
+                            instance.warning(
+                                f"{route_name} - slow request ({round(duration_ms, 0)}ms)",
+                                **log_data
+                            )
 
                     return response
 
@@ -193,15 +209,15 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
 
     # Add middleware to app
     middleware_instance = LogzAIMiddleware(app)
-    app.user_middleware.insert(0, (LogzAIMiddleware, {}))
+    app.user_middleware.insert(0, (LogzAIMiddleware, [], {}))
 
-    instance.info(
-        "FastAPI instrumentation enabled",
-        event="fastapi.plugin.registered",
-        log_request_body=log_request_body,
-        log_response_body=log_response_body,
-        slow_threshold_ms=slow_threshold_ms
-    )
+    # instance.info(
+    #     "FastAPI instrumentation enabled",
+    #     event="fastapi.plugin.registered",
+    #     log_request_body=log_request_body,
+    #     log_response_body=log_response_body,
+    #     slow_threshold_ms=slow_threshold_ms
+    # )
 
     # Return cleanup function
     def cleanup():
@@ -209,7 +225,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
         try:
             # Remove our middleware
             app.user_middleware = [
-                (mw_cls, opts) for mw_cls, opts in app.user_middleware
+                (mw_cls, args, kwargs) for mw_cls, args, kwargs in app.user_middleware
                 if mw_cls is not LogzAIMiddleware
             ]
 
@@ -217,10 +233,10 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
             app.middleware_stack = None
             app.build_middleware_stack()
 
-            instance.info(
-                "FastAPI instrumentation disabled",
-                event="fastapi.plugin.unregistered"
-            )
+            # instance.info(
+            #     "FastAPI instrumentation disabled",
+            #     event="fastapi.plugin.unregistered"
+            # )
         except Exception as e:
             instance.error(
                 f"Error removing FastAPI middleware: {str(e)}",
