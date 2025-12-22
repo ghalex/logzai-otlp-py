@@ -76,7 +76,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
     """
     # Import pydantic_ai only when plugin is registered (optional dependency)
     try:
-        from pydantic_ai import Agent
+        from pydantic_ai import Agent, models
         from pydantic_ai import messages as _messages
     except ImportError as e:
         raise ImportError(
@@ -167,6 +167,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
 
         # Create span for agent execution
         with instance.span(f"pydantic_ai.agent.run") as span:
+            span.set_attribute("kind", "ai")
             span.set_attribute("agent.name", agent_name)
             span.set_attribute("agent.prompt", user_prompt if isinstance(user_prompt, str) else str(user_prompt))
 
@@ -177,6 +178,9 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
                 # Extract usage information
                 messages = extract_messages(result)
                 model_name, provider = extract_model_info(result)
+
+                if (self.model is models.Model):
+                    model_name = self.model.model_name
 
                 usage = Usage(
                     model=model_name,
@@ -197,6 +201,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
                 # Log to LogzAI
                 log_data = {
                     "event": "pydantic_ai.agent.run",
+                    "kind": "ai",
                     "model": usage.model,
                     "provider": usage.provider,
                     "input_tokens": usage.input_tokens,
@@ -235,6 +240,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
 
         # Create span for agent execution
         with instance.span(f"pydantic_ai.agent.run_sync") as span:
+            span.set_attribute("kind", "ai")
             span.set_attribute("agent.name", agent_name)
             span.set_attribute("agent.prompt", user_prompt if isinstance(user_prompt, str) else str(user_prompt))
 
@@ -245,6 +251,9 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
                 # Extract usage information
                 messages = extract_messages(result)
                 model_name, provider = extract_model_info(result)
+
+                if (self.model is models.Model):
+                    model_name = self.model.model_name
 
                 usage = Usage(
                     model=model_name,
@@ -265,6 +274,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
                 # Log to LogzAI
                 log_data = {
                     "event": "pydantic_ai.agent.run_sync",
+                    "kind": "ai",
                     "model": usage.model,
                     "provider": usage.provider,
                     "input_tokens": usage.input_tokens,

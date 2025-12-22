@@ -261,11 +261,11 @@ class LogzAI(LogzAIBase):
                     config=config
                 )
 
-                if self.logger:
-                    self.logger.debug(
-                        f"Plugin '{name}' registered successfully",
-                        extra={"plugin_name": name, "has_cleanup": cleanup_func is not None}
-                    )
+                # if self.logger:
+                #     self.logger.debug(
+                #         f"Plugin '{name}' registered successfully",
+                #         extra={"plugin_name": name, "has_cleanup": cleanup_func is not None}
+                #     )
 
             except Exception as e:
                 # Log error but don't crash (matches JS try-catch behavior)
@@ -301,11 +301,11 @@ class LogzAI(LogzAIBase):
             self._cleanup_plugin(name)
             del self._plugins[name]
 
-            if self.logger:
-                self.logger.debug(
-                    f"Plugin '{name}' unregistered",
-                    extra={"plugin_name": name}
-                )
+            # if self.logger:
+            #     self.logger.debug(
+            #         f"Plugin '{name}' unregistered",
+            #         extra={"plugin_name": name}
+            #     )
 
             return True
 

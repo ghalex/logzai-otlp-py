@@ -83,17 +83,18 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
             # Get route info
             method = request.method
             path = request.url.path
-            route_name = f"{method} {path}"
+            route_name = f"{method} → {path}"
 
             # Match route pattern if available
             if hasattr(request, "scope") and "route" in request.scope:
                 route = request.scope.get("route")
                 if route and hasattr(route, "path"):
-                    route_name = f"{method} {route.path}"
+                    route_name = f"{method} → {route.path}"
 
             # Create span for this request with method and route
             with instance.span(route_name) as span:
                 # Set span attributes
+                span.set_attribute("kind", "http")
                 span.set_attribute("http.method", method)
                 span.set_attribute("http.route", path)
                 span.set_attribute("http.url", str(request.url))
@@ -156,6 +157,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                         # Prepare log data
                         log_data = {
                             "event": "http.request",
+                            "kind": "http",
                             "http_method": method,
                             "http_route": path,
                             "http_status": response.status_code,
@@ -175,12 +177,12 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                         # Log based on status and performance
                         if is_error:
                             instance.error(
-                                f"{route_name} - {response.status_code}",
+                                f"{route_name} → {response.status_code}",
                                 **log_data
                             )
                         elif is_slow:
                             instance.warning(
-                                f"{route_name} - slow request ({round(duration_ms, 0)}ms)",
+                                f"{route_name} → slow request ({round(duration_ms, 0)}ms)",
                                 **log_data
                             )
 
@@ -196,7 +198,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
 
                     # Log error
                     instance.error(
-                        f"{route_name} - error: {str(e)}",
+                        f"{route_name} → error: {str(e)}",
                         event="http.request.error",
                         http_method=method,
                         http_route=path,

@@ -426,7 +426,7 @@ wheels = [
 
 [[package]]
 name = "logzai-otlp"
-version = "1.0.5"
+version = "1.0.7"
 source = { editable = "." }
 dependencies = [
     { name = "opentelemetry-exporter-otlp" },
