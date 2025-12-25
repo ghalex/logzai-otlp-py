@@ -5,45 +5,9 @@ Instruments Agent.run() and Agent.run_sync() to automatically log usage and mess
 Note: pydantic_ai is imported only when the plugin is registered,
 making it an optional dependency.
 """
-from typing import Optional, Any
-from pydantic import BaseModel
 
-
-class ToolCall(BaseModel):
-    """Represents a tool call made by the assistant."""
-    id: str
-    name: str
-    arguments: str  # JSON string of arguments
-
-
-class Message(BaseModel):
-    """
-    OpenAI-style message format supporting text, tool calls, and tool results.
-
-    Roles:
-    - system: System prompt/instructions
-    - user: User input
-    - assistant: Model response (can include tool_calls)
-    - tool: Tool execution result
-    """
-    role: str  # "system" | "user" | "assistant" | "tool"
-    content: str | None = None
-
-    # For assistant messages that call tools
-    tool_calls: list[ToolCall] | None = None
-
-    # For tool messages (results)
-    tool_call_id: str | None = None
-    tool_name: str | None = None
-
-
-class Usage(BaseModel):
-    model: str | None = None
-    provider: str | None = None
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-    messages: list[Message]
+from typing import Optional
+from logzai_otlp.models import Message, ToolCall, Usage
 
 
 def pydantic_ai_plugin(instance, config: Optional[dict] = None):
@@ -76,7 +40,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
     """
     # Import pydantic_ai only when plugin is registered (optional dependency)
     try:
-        from pydantic_ai import Agent, models
+        from pydantic_ai import Agent
         from pydantic_ai import messages as _messages
     except ImportError as e:
         raise ImportError(
@@ -116,17 +80,23 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
                         extracted.append(Message(role="system", content=part.content))
 
                     elif isinstance(part, _messages.UserPromptPart):
-                        content = part.content if isinstance(part.content, str) else str(part.content)
+                        content = (
+                            part.content
+                            if isinstance(part.content, str)
+                            else str(part.content)
+                        )
                         extracted.append(Message(role="user", content=content))
 
                     elif isinstance(part, _messages.ToolReturnPart):
                         # Tool result message
-                        extracted.append(Message(
-                            role="tool",
-                            content=str(part.content),
-                            tool_call_id=part.tool_call_id,
-                            tool_name=part.tool_name
-                        ))
+                        extracted.append(
+                            Message(
+                                role="tool",
+                                content=str(part.content),
+                                tool_call_id=part.tool_call_id,
+                                tool_name=part.tool_name,
+                            )
+                        )
 
             elif isinstance(msg, _messages.ModelResponse):
                 # Collect text parts and tool calls separately
@@ -138,21 +108,25 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
                         text_parts.append(part.content)
 
                     elif isinstance(part, _messages.ToolCallPart):
-                        tool_calls.append(ToolCall(
-                            id=part.tool_call_id,
-                            name=part.tool_name,
-                            arguments=part.args_as_json_str()
-                        ))
+                        tool_calls.append(
+                            ToolCall(
+                                id=part.tool_call_id,
+                                name=part.tool_name,
+                                arguments=part.args_as_json_str(),
+                            )
+                        )
 
                 # Create assistant message
                 text_content = "".join(text_parts) if text_parts else None
 
                 if text_content or tool_calls:
-                    extracted.append(Message(
-                        role="assistant",
-                        content=text_content,
-                        tool_calls=tool_calls if tool_calls else None
-                    ))
+                    extracted.append(
+                        Message(
+                            role="assistant",
+                            content=text_content,
+                            tool_calls=tool_calls if tool_calls else None,
+                        )
+                    )
 
         return extracted
 
@@ -160,149 +134,151 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
     original_run = Agent.run
     original_run_sync = Agent.run_sync
 
+    def process_agent_result(
+        result, self, user_prompt: str, agent_name: str, span, span_name: str
+    ):
+        """Common logic for processing agent results (sync and async)."""
+        # Extract usage information
+        messages = extract_messages(result)
+        model_name, provider = extract_model_info(result)
+
+        usage = Usage(
+            model=model_name,
+            provider=provider,
+            input_tokens=result.usage().input_tokens,
+            output_tokens=result.usage().output_tokens,
+            total_tokens=result.usage().total_tokens,
+            messages=messages,
+        )
+
+        # OpenTelemetry GenAI semantic conventions - Recommended
+        span.set_attribute("gen_ai.system", usage.provider or "unknown")
+        span.set_attribute("gen_ai.request.model", usage.model or "unknown")
+        span.set_attribute("gen_ai.response.model", usage.model or "unknown")
+        span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
+
+        # Custom attribute (not in OTel standard)
+        span.set_attribute("agent.total_tokens", usage.total_tokens)
+
+        # Log to LogzAI
+        log_data = {
+            "event": span_name,
+            "kind": "ai",
+            "model": usage.model,
+            "provider": usage.provider,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "total_tokens": usage.total_tokens,
+            "user_prompt": user_prompt
+            if isinstance(user_prompt, str)
+            else str(user_prompt),
+            "agent_name": agent_name,
+        }
+
+        # Optionally include full message history
+        if include_messages:
+            span.set_attribute(
+                "gen_ai.messages",
+                [msg.model_dump(exclude_none=True) for msg in usage.messages],
+            )
+
+            log_data["messages"] = [
+                msg.model_dump(exclude_none=True) for msg in usage.messages
+            ]
+
+        instance.info(
+            f"PydanticAI agent completed: {usage.total_tokens} tokens", **log_data
+        )
+
+        return result
+
     async def instrumented_run(self, *args, **kwargs):
         """Wrapped async run method that captures agent execution."""
-        user_prompt = args[0] if args else kwargs.get('user_prompt', '')
-        agent_name = getattr(self, 'name', 'unnamed_agent')
+        user_prompt = args[0] if args else kwargs.get("user_prompt", "")
+        agent_name = getattr(self, "name", None) or "unnamed_agent"
 
         # Create span for agent execution
-        with instance.span(f"pydantic_ai.agent.run") as span:
+        with instance.span("pydantic_ai.agent.run") as span:
+            # Custom attribute for LogzAI filtering
             span.set_attribute("kind", "ai")
+
+            # OpenTelemetry GenAI semantic conventions - Required
+            span.set_attribute("gen_ai.operation.name", "chat")
+
+            # Custom agent-specific attributes (not in OTel standard yet)
             span.set_attribute("agent.name", agent_name)
-            span.set_attribute("agent.prompt", user_prompt if isinstance(user_prompt, str) else str(user_prompt))
+            span.set_attribute(
+                "agent.prompt",
+                user_prompt if isinstance(user_prompt, str) else str(user_prompt),
+            )
 
             try:
                 # Call original run method
                 result = await original_run(self, *args, **kwargs)
 
-                # Extract usage information
-                messages = extract_messages(result)
-                model_name, provider = extract_model_info(result)
-
-                if (self.model is models.Model):
-                    model_name = self.model.model_name
-
-                usage = Usage(
-                    model=model_name,
-                    provider=provider,
-                    input_tokens=result.usage().input_tokens,
-                    output_tokens=result.usage().output_tokens,
-                    total_tokens=result.usage().total_tokens,
-                    messages=messages
+                # Process and log result
+                return process_agent_result(
+                    result, self, user_prompt, agent_name, span, "pydantic_ai.agent.run"
                 )
-
-                # Add span attributes
-                span.set_attribute("agent.model", usage.model or "unknown")
-                span.set_attribute("agent.provider", usage.provider or "unknown")
-                span.set_attribute("agent.input_tokens", usage.input_tokens)
-                span.set_attribute("agent.output_tokens", usage.output_tokens)
-                span.set_attribute("agent.total_tokens", usage.total_tokens)
-
-                # Log to LogzAI
-                log_data = {
-                    "event": "pydantic_ai.agent.run",
-                    "kind": "ai",
-                    "model": usage.model,
-                    "provider": usage.provider,
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.total_tokens,
-                    "user_prompt": user_prompt if isinstance(user_prompt, str) else str(user_prompt),
-                    "agent_name": agent_name,
-                }
-
-                # Optionally include full message history
-                if include_messages:
-                    log_data["messages"] = [msg.model_dump() for msg in usage.messages]
-
-                instance.info(
-                    f"PydanticAI agent completed: {usage.total_tokens} tokens",
-                    **log_data
-                )
-
-                return result
 
             except Exception as e:
                 # Log error
                 instance.error(
                     f"PydanticAI agent error: {str(e)}",
                     event="pydantic_ai.agent.error",
-                    user_prompt=user_prompt if isinstance(user_prompt, str) else str(user_prompt),
+                    user_prompt=user_prompt
+                    if isinstance(user_prompt, str)
+                    else str(user_prompt),
                     error=str(e),
-                    exc_info=True
+                    exc_info=True,
                 )
                 raise
 
     def instrumented_run_sync(self, *args, **kwargs):
         """Wrapped sync run method."""
-        user_prompt = args[0] if args else kwargs.get('user_prompt', '')
-        agent_name = getattr(self, 'name', 'unnamed_agent')
+        user_prompt = args[0] if args else kwargs.get("user_prompt", "")
+        agent_name = getattr(self, "name", None) or "unnamed_agent"
 
         # Create span for agent execution
-        with instance.span(f"pydantic_ai.agent.run_sync") as span:
+        with instance.span("pydantic_ai.agent.run_sync") as span:
+            # Custom attribute for LogzAI filtering
             span.set_attribute("kind", "ai")
+
+            # OpenTelemetry GenAI semantic conventions - Required
+            span.set_attribute("gen_ai.operation.name", "chat")
+
+            # Custom agent-specific attributes (not in OTel standard yet)
             span.set_attribute("agent.name", agent_name)
-            span.set_attribute("agent.prompt", user_prompt if isinstance(user_prompt, str) else str(user_prompt))
+            span.set_attribute(
+                "agent.prompt",
+                user_prompt if isinstance(user_prompt, str) else str(user_prompt),
+            )
 
             try:
                 # Call original run_sync method
                 result = original_run_sync(self, *args, **kwargs)
 
-                # Extract usage information
-                messages = extract_messages(result)
-                model_name, provider = extract_model_info(result)
-
-                if (self.model is models.Model):
-                    model_name = self.model.model_name
-
-                usage = Usage(
-                    model=model_name,
-                    provider=provider,
-                    input_tokens=result.usage().input_tokens,
-                    output_tokens=result.usage().output_tokens,
-                    total_tokens=result.usage().total_tokens,
-                    messages=messages
+                # Process and log result
+                return process_agent_result(
+                    result,
+                    self,
+                    user_prompt,
+                    agent_name,
+                    span,
+                    "pydantic_ai.agent.run_sync",
                 )
-
-                # Add span attributes
-                span.set_attribute("agent.model", usage.model or "unknown")
-                span.set_attribute("agent.provider", usage.provider or "unknown")
-                span.set_attribute("agent.input_tokens", usage.input_tokens)
-                span.set_attribute("agent.output_tokens", usage.output_tokens)
-                span.set_attribute("agent.total_tokens", usage.total_tokens)
-
-                # Log to LogzAI
-                log_data = {
-                    "event": "pydantic_ai.agent.run_sync",
-                    "kind": "ai",
-                    "model": usage.model,
-                    "provider": usage.provider,
-                    "input_tokens": usage.input_tokens,
-                    "output_tokens": usage.output_tokens,
-                    "total_tokens": usage.total_tokens,
-                    "user_prompt": user_prompt if isinstance(user_prompt, str) else str(user_prompt),
-                    "agent_name": agent_name,
-                }
-
-                # Optionally include full message history
-                if include_messages:
-                    log_data["messages"] = [msg.model_dump() for msg in usage.messages]
-
-                instance.info(
-                    f"PydanticAI agent completed (sync): {usage.total_tokens} tokens",
-                    **log_data
-                )
-
-                return result
 
             except Exception as e:
                 # Log error
                 instance.error(
                     f"PydanticAI agent error (sync): {str(e)}",
                     event="pydantic_ai.agent.error",
-                    user_prompt=user_prompt if isinstance(user_prompt, str) else str(user_prompt),
+                    user_prompt=user_prompt
+                    if isinstance(user_prompt, str)
+                    else str(user_prompt),
                     error=str(e),
-                    exc_info=True
+                    exc_info=True,
                 )
                 raise
 

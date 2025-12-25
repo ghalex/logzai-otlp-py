@@ -1,13 +1,20 @@
 # Type stubs for logzai_otlp
 from contextlib import AbstractContextManager
-from typing import Any, Dict, Optional, Generator, Callable, Union, TypeVar, Awaitable
+from typing import Any, Optional, Callable, Union, TypeVar, Awaitable
 from opentelemetry.trace import Span
-import logging
 
 # Plugin system types
-T = TypeVar('T')
+T = TypeVar("T")
 CleanupFunction = Union[Callable[[], None], Callable[[], Awaitable[None]]]
-LogzAIPlugin = Callable[[LogzAI, Optional[T]], Optional[CleanupFunction]]
+LogzAIPlugin = Callable[["LogzAI", Optional[T]], Optional[CleanupFunction]]
+
+# Re-export plugin symbols for package consumers
+from .plugins import (  # noqa: E402
+    PluginEntry,
+    pydantic_ai_plugin,
+    fastapi_plugin,
+    langchain_plugin,
+)
 
 class LogzAI:
     def init(
@@ -21,8 +28,8 @@ class LogzAI:
         environment: str = ...,
         protocol: str = ...,
         mirror_to_console: bool = ...,
+        origin: Optional[str] = ...,
     ) -> None: ...
-    
     def log(
         self,
         level: int,
@@ -30,9 +37,8 @@ class LogzAI:
         *,
         stacklevel: int = ...,
         exc_info: bool = ...,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None: ...
-    
     def debug(self, message: str, exc_info: bool = ..., **kwargs: Any) -> None: ...
     def info(self, message: str, exc_info: bool = ..., **kwargs: Any) -> None: ...
     def warning(self, message: str, exc_info: bool = ..., **kwargs: Any) -> None: ...
@@ -40,19 +46,24 @@ class LogzAI:
     def error(self, message: str, exc_info: bool = ..., **kwargs: Any) -> None: ...
     def critical(self, message: str, exc_info: bool = ..., **kwargs: Any) -> None: ...
     def exception(self, message: str, **kwargs: Any) -> None: ...
-    
     def start_span(self, name: str, **kwargs: Any) -> Span: ...
     def span(self, name: str, **kwargs: Any) -> AbstractContextManager[Span]: ...
     def set_span_attribute(self, span: Span, key: str, value: Any) -> None: ...
-
     def plugin(
-        self,
-        name: str,
-        plugin_func: LogzAIPlugin[T],
-        config: Optional[T] = ...
+        self, name: str, plugin_func: LogzAIPlugin[T], config: Optional[T] = ...
     ) -> None: ...
     def unregister_plugin(self, name: str) -> bool: ...
-
     def shutdown(self) -> None: ...
 
 logzai: LogzAI
+
+__all__ = [
+    "LogzAI",
+    "logzai",
+    "LogzAIPlugin",
+    "CleanupFunction",
+    "PluginEntry",
+    "pydantic_ai_plugin",
+    "fastapi_plugin",
+    "langchain_plugin",
+]

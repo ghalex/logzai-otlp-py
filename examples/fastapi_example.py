@@ -3,9 +3,16 @@
 Example: Using LogzAI with FastAPI plugin.
 Demonstrates automatic logging and tracing of HTTP requests.
 """
-from fastapi import FastAPI
-from pydantic import BaseModel
-from logzai_otlp import logzai, fastapi_plugin
+
+import os
+import dotenv
+
+dotenv.load_dotenv(override=True)
+
+from fastapi import FastAPI  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+from logzai_otlp import logzai  # noqa: E402
+from logzai_otlp.plugins import fastapi_plugin  # noqa: E402
 
 
 # Create FastAPI app
@@ -25,19 +32,22 @@ class LoginResponse(BaseModel):
 
 # Initialize LogzAI and register FastAPI plugin
 logzai.init(
-    ingest_token="your-token",
-    ingest_endpoint="http://localhost:4318",  # or https://ingest.logzai.com
-    service_name="fastapi-demo",
+    ingest_token=os.getenv("LOGZAI_TOKEN", "pylz_v1_e"),
+    ingest_endpoint=os.getenv("LOGZAI_ENDPOINT", "https://ingest.logzai.com"),
+    service_name="pydantic-example",
     environment="dev",
-    mirror_to_console=True  # Also print to console for demo
+    mirror_to_console=True,
 )
-
 # Register FastAPI plugin
-logzai.plugin('fastapi', fastapi_plugin, {
-    "app": app,
-    "log_request_body": True,  # Log request bodies
-    "slow_request_threshold_ms": 500  # Warn on requests >500ms
-})
+logzai.plugin(
+    "fastapi",
+    fastapi_plugin,
+    {
+        "app": app,
+        "log_request_body": True,  # Log request bodies
+        "slow_request_threshold_ms": 500,  # Warn on requests >500ms
+    },
+)
 
 
 # Routes - all logs within routes are automatically associated with the request span
@@ -76,6 +86,7 @@ async def get_user(user_id: str):
 
     # Simulate slow database query
     import asyncio
+
     await asyncio.sleep(0.6)  # Will trigger slow request warning
 
     logzai.info("User fetched successfully", user_id=user_id)
@@ -98,9 +109,10 @@ async def error_endpoint():
 
 if __name__ == "__main__":
     import uvicorn
-    print("\n" + "="*50)
+
+    print("\n" + "=" * 50)
     print("FastAPI + LogzAI Demo")
-    print("="*50)
+    print("=" * 50)
     print("\nEndpoints:")
     print("  GET  /              - Root endpoint")
     print("  GET  /health        - Health check")
@@ -108,6 +120,6 @@ if __name__ == "__main__":
     print("  GET  /users/{id}    - Get user (slow)")
     print("  GET  /error         - Error example")
     print("\nStarting server...")
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
