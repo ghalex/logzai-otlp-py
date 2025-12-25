@@ -6,6 +6,7 @@ Note: pydantic_ai is imported only when the plugin is registered,
 making it an optional dependency.
 """
 
+import json
 from typing import Optional
 from logzai_otlp.models import Message, ToolCall, Usage
 
@@ -178,14 +179,13 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
 
         # Optionally include full message history
         if include_messages:
-            span.set_attribute(
-                "gen_ai.messages",
-                [msg.model_dump(exclude_none=True) for msg in usage.messages],
-            )
+            messages_data = [msg.model_dump(exclude_none=True) for msg in usage.messages]
 
-            log_data["messages"] = [
-                msg.model_dump(exclude_none=True) for msg in usage.messages
-            ]
+            # Set as JSON string for span attribute (better OTel compatibility)
+            span.set_attribute("gen_ai.messages", json.dumps(messages_data))
+
+            # Keep as list for log data (structured logging)
+            log_data["gen_ai.messages"] = messages_data
 
         instance.info(
             f"PydanticAI agent completed: {usage.total_tokens} tokens", **log_data
