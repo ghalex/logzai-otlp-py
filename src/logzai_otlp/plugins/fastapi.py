@@ -188,6 +188,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                                 f"{route_name} → {response.status_code}", **log_data
                             )
                         elif is_slow:
+                            span.set_attribute("http.slow_request", True)
                             instance.warning(
                                 f"{route_name} → slow request ({round(duration_ms, 0)}ms)",
                                 **log_data,
