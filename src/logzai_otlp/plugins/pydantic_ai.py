@@ -165,7 +165,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
         # Log to LogzAI
         log_data = {
             "event": span_name,
-            "kind": "ai",
+            "type": "ai",
             "model": usage.model,
             "provider": usage.provider,
             "input_tokens": usage.input_tokens,
@@ -179,7 +179,9 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
 
         # Optionally include full message history
         if include_messages:
-            messages_data = [msg.model_dump(exclude_none=True) for msg in usage.messages]
+            messages_data = [
+                msg.model_dump(exclude_none=True) for msg in usage.messages
+            ]
 
             # Set as JSON string for span attribute (better OTel compatibility)
             span.set_attribute("gen_ai.messages", json.dumps(messages_data))
@@ -201,7 +203,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
         # Create span for agent execution
         with instance.span("pydantic_ai.agent.run") as span:
             # Custom attribute for LogzAI filtering
-            span.set_attribute("kind", "ai")
+            span.set_attribute("type", "ai")
 
             # OpenTelemetry GenAI semantic conventions - Required
             span.set_attribute("gen_ai.operation.name", "chat")
@@ -243,7 +245,7 @@ def pydantic_ai_plugin(instance, config: Optional[dict] = None):
         # Create span for agent execution
         with instance.span("pydantic_ai.agent.run_sync") as span:
             # Custom attribute for LogzAI filtering
-            span.set_attribute("kind", "ai")
+            span.set_attribute("type", "ai")
 
             # OpenTelemetry GenAI semantic conventions - Required
             span.set_attribute("gen_ai.operation.name", "chat")

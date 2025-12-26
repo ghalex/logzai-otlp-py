@@ -27,7 +27,7 @@ logzai.init(
 logzai.plugin(
     "langchain",
     langchain_plugin,
-    {"include_messages": True, "add_kind_attribute": True, "log_token_usage": True},
+    {"include_messages": True, "log_token_usage": True},
 )
 
 # NOW import LangChain (after plugin registration)

@@ -5,7 +5,8 @@ Automatically logs HTTP requests and responses with distributed tracing.
 Note: fastapi and starlette are imported only when the plugin is registered,
 making them optional dependencies.
 """
-from typing import Optional, Any
+
+from typing import Optional
 import time
 
 
@@ -72,6 +73,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
     app: FastAPI = config["app"]
     log_request_body = config.get("log_request_body", False)
     log_response_body = config.get("log_response_body", False)
+
     log_request_headers = config.get("log_request_headers", False)
     log_response_headers = config.get("log_response_headers", False)
     slow_threshold_ms = config.get("slow_request_threshold_ms", 1000)
@@ -94,7 +96,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
             # Create span for this request with method and route
             with instance.span(route_name) as span:
                 # Set span attributes
-                span.set_attribute("kind", "http")
+                span.set_attribute("type", "http")
                 span.set_attribute("http.method", method)
                 span.set_attribute("http.route", path)
                 span.set_attribute("http.url", str(request.url))
@@ -115,7 +117,9 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                     for header_name, header_value in request.headers.items():
                         # Normalize header name: lowercase and replace hyphens with underscores
                         normalized_name = header_name.lower().replace("-", "_")
-                        span.set_attribute(f"http.request.header.{normalized_name}", header_value)
+                        span.set_attribute(
+                            f"http.request.header.{normalized_name}", header_value
+                        )
 
                 # Start timing
                 start_time = time.time()
@@ -125,7 +129,9 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                 if log_request_body:
                     try:
                         body_bytes = await request.body()
-                        request_body = body_bytes.decode("utf-8") if body_bytes else None
+                        request_body = (
+                            body_bytes.decode("utf-8") if body_bytes else None
+                        )
                         # Note: We need to create a new request with the body since it's consumed
                         # This is handled by FastAPI's dependency injection
                     except Exception:
@@ -147,7 +153,9 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                         for header_name, header_value in response.headers.items():
                             # Normalize header name: lowercase and replace hyphens with underscores
                             normalized_name = header_name.lower().replace("-", "_")
-                            span.set_attribute(f"http.response.header.{normalized_name}", header_value)
+                            span.set_attribute(
+                                f"http.response.header.{normalized_name}", header_value
+                            )
 
                     # Log only for errors or slow requests
                     is_error = response.status_code >= 400
@@ -157,7 +165,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                         # Prepare log data
                         log_data = {
                             "event": "http.request",
-                            "kind": "http",
+                            "type": "http",
                             "http_method": method,
                             "http_route": path,
                             "http_status": response.status_code,
@@ -177,13 +185,12 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                         # Log based on status and performance
                         if is_error:
                             instance.error(
-                                f"{route_name} → {response.status_code}",
-                                **log_data
+                                f"{route_name} → {response.status_code}", **log_data
                             )
                         elif is_slow:
                             instance.warning(
                                 f"{route_name} → slow request ({round(duration_ms, 0)}ms)",
-                                **log_data
+                                **log_data,
                             )
 
                     return response
@@ -204,14 +211,14 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
                         http_route=path,
                         duration_ms=round(duration_ms, 2),
                         error=str(e),
-                        exc_info=True
+                        exc_info=True,
                     )
 
                     raise
 
     # Add middleware to app
-    middleware_instance = LogzAIMiddleware(app)
-    app.user_middleware.insert(0, (LogzAIMiddleware, [], {}))
+    LogzAIMiddleware(app)
+    app.user_middleware.insert(0, (LogzAIMiddleware, [], {}))  # type: ignore
 
     # instance.info(
     #     "FastAPI instrumentation enabled",
@@ -226,8 +233,9 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
         """Remove middleware from FastAPI app."""
         try:
             # Remove our middleware
-            app.user_middleware = [
-                (mw_cls, args, kwargs) for mw_cls, args, kwargs in app.user_middleware
+            app.user_middleware = [  # type: ignore
+                (mw_cls, args, kwargs)
+                for mw_cls, args, kwargs in app.user_middleware
                 if mw_cls is not LogzAIMiddleware
             ]
 
@@ -243,7 +251,7 @@ def fastapi_plugin(instance, config: Optional[dict] = None):
             instance.error(
                 f"Error removing FastAPI middleware: {str(e)}",
                 event="fastapi.plugin.cleanup.error",
-                error=str(e)
+                error=str(e),
             )
 
     return cleanup

@@ -85,7 +85,7 @@ class LangChainSpanExporterWrapper(SpanExporter):
     Wrapper for span exporters that modifies LangChain spans before export.
 
     This wrapper intercepts spans before they're exported and:
-    - Adds kind="ai" attribute to LangChain spans
+    - Adds type="ai" attribute to LangChain spans
     - Extracts and normalizes messages from gen_ai.prompt and gen_ai.completion
     - Stores normalized messages in gen_ai.messages attribute
     """
@@ -93,11 +93,11 @@ class LangChainSpanExporterWrapper(SpanExporter):
     def __init__(
         self,
         wrapped_exporter: SpanExporter,
-        add_kind: bool = True,
+        add_type: bool = True,
         include_messages: bool = True,
     ):
         self.wrapped_exporter = wrapped_exporter
-        self.add_kind = add_kind
+        self.add_type = add_type
         self.include_messages = include_messages
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
@@ -115,16 +115,16 @@ class LangChainSpanExporterWrapper(SpanExporter):
                 )
 
             if is_langchain and span.attributes:
-                # Add kind="ai" attribute
-                if self.add_kind and "kind" not in span.attributes:
+                # Add type="ai" attribute
+                if self.add_type and "type" not in span.attributes:
                     try:
-                        # Access internal attributes dict to add the kind attribute
+                        # Access internal attributes dict to add the type attribute
                         if hasattr(span, "_attributes"):
-                            span._attributes["kind"] = "ai"  # type: ignore
+                            span._attributes["type"] = "ai"  # type: ignore
                         elif hasattr(span, "attributes") and hasattr(
                             span.attributes, "_mapping"
                         ):
-                            span.attributes._mapping["kind"] = "ai"  # type: ignore
+                            span.attributes._mapping["type"] = "ai"  # type: ignore
                     except (AttributeError, TypeError):
                         pass
 
@@ -235,7 +235,7 @@ def langchain_plugin(
     Args:
         instance: LogzAI instance
         config: Optional configuration dict with keys:
-            - add_kind_attribute: bool (default: True) - Add kind="ai" to LangChain spans
+            - add_type_attribute: bool (default: True) - Add type="ai" to LangChain spans
             - include_messages: bool (default: True) - Include message history in gen_ai.messages
             - warn_if_late: bool (default: True) - Warn if LangChain already imported
 
@@ -262,7 +262,7 @@ def langchain_plugin(
 
         # Register plugin BEFORE importing LangChain
         logzai.plugin('langchain', langchain_plugin, {
-            "add_kind_attribute": True
+            "add_type_attribute": True
         })
 
         # NOW import and use LangChain
@@ -275,7 +275,7 @@ def langchain_plugin(
     if config is None:
         config = {}
 
-    add_kind_attribute = config.get("add_kind_attribute", True)
+    add_type_attribute = config.get("add_type_attribute", True)
     include_messages = config.get("include_messages", True)
     warn_if_late = config.get("warn_if_late", True)
 
@@ -352,7 +352,7 @@ def langchain_plugin(
                 original_exporter = batch_processor._exporter  # type: ignore
                 wrapped_exporter = LangChainSpanExporterWrapper(
                     original_exporter,  # type: ignore
-                    add_kind=add_kind_attribute,  # type: ignore
+                    add_type=add_type_attribute,  # type: ignore
                     include_messages=include_messages,  # type: ignore
                 )
                 # Replace the exporter in the BatchProcessor
@@ -362,7 +362,7 @@ def langchain_plugin(
         # instance.debug(
         #     "LangChain plugin: exporter wrapper added",
         #     event="langchain.plugin.wrapper_added",
-        #     add_kind_attribute=add_kind_attribute,
+        #     add_type_attribute=add_type_attribute,
         #     wrapped_count=len(wrapped_exporters),
         # )
 

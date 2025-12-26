@@ -81,16 +81,16 @@ uv run examples/pydantic_ai_example.py
 4. Plugins can monkey-patch classes, add middleware, or extend the `LogzAI` instance
 
 **Standard Attributes Pattern**:
-Both built-in plugins follow a convention of setting a `kind` attribute on spans and log events:
-- `kind="http"` for HTTP requests (FastAPI plugin)
-- `kind="ai"` for AI agent calls (PydanticAI plugin)
+Both built-in plugins follow a convention of setting a `type` attribute on spans and log events:
+- `type="http"` for HTTP requests (FastAPI plugin)
+- `type="ai"` for AI agent calls (PydanticAI plugin)
 
 This enables filtering and categorization in the LogzAI backend.
 
 **OpenTelemetry Semantic Conventions Compliance**:
 - **PydanticAI plugin**: Follows [OpenTelemetry GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) using `gen_ai.*` attributes for model, provider, and token usage
 - **FastAPI plugin**: Follows standard HTTP semantic conventions using `http.*` attributes
-- **Custom attributes**: Both plugins add custom attributes (like `kind`) for LogzAI-specific features while maintaining OTel compatibility
+- **Custom attributes**: Both plugins add custom attributes (like `type`) for LogzAI-specific features while maintaining OTel compatibility
 
 #### FastAPI Plugin (`plugins/fastapi.py`)
 
@@ -101,7 +101,7 @@ This enables filtering and categorization in the LogzAI backend.
 - Sets comprehensive span attributes for all requests
 
 **Span attributes captured**:
-- `kind="http"` - Request type identifier
+- `type="http"` - Request type identifier
 - `http.method`, `http.route`, `http.url`, `http.scheme`, `http.host` - Request details
 - `http.status_code`, `http.duration_ms` - Response details
 - `http.client.ip`, `http.user_agent` - Client info
@@ -145,7 +145,7 @@ OpenTelemetry GenAI semantic conventions (standard):
 - `gen_ai.usage.output_tokens` - Output tokens generated
 
 Custom LogzAI attributes:
-- `kind="ai"` - LogzAI filtering identifier
+- `type="ai"` - LogzAI filtering identifier
 - `agent.name` - Agent name (if set)
 - `agent.prompt` - User prompt that triggered the agent
 - `agent.total_tokens` - Total tokens (input + output)
@@ -154,7 +154,7 @@ Custom LogzAI attributes:
 ```python
 {
     "event": "pydantic_ai.agent.run",
-    "kind": "ai",
+    "type": "ai",
     "model": "gpt-4o-mini",
     "provider": "openai",
     "input_tokens": 123,
@@ -198,7 +198,7 @@ logzai.plugin('pydantic-ai', pydantic_ai_plugin, {
 **What it does**:
 - Activates LangChain's built-in OpenTelemetry instrumentation
 - Automatically creates spans for chains, LLM calls, tools, and agents
-- Optionally adds `kind="ai"` attribute for LogzAI filtering
+- Optionally adds `type="ai"` attribute for LogzAI filtering
 - Follows OpenTelemetry GenAI semantic conventions
 
 **How it works**:
@@ -232,7 +232,7 @@ from langchain.agents import create_agent
 **Configuration options**:
 ```python
 logzai.plugin('langchain', langchain_plugin, {
-    "add_kind_attribute": True,  # Add kind="ai" to spans (default: True)
+    "add_type_attribute": True,  # Add type="ai" to spans (default: True)
     "include_messages": True,    # Include message history in gen_ai.messages (default: True)
     "warn_if_late": True         # Warn if LangChain already imported (default: True)
 })
@@ -249,7 +249,7 @@ OpenTelemetry GenAI semantic conventions (standard):
 - `gen_ai.messages` - Full conversation history in OpenAI format (when `include_messages=True`)
 
 Custom LogzAI attributes (optional):
-- `kind="ai"` - LogzAI filtering identifier (when `add_kind_attribute=True`)
+- `type="ai"` - LogzAI filtering identifier (when `add_type_attribute=True`)
 
 **Message format** (when `include_messages=True`):
 The plugin extracts messages from LangChain's `gen_ai.prompt` and `gen_ai.completion` attributes and normalizes them to OpenAI format, similar to the PydanticAI plugin:
@@ -279,7 +279,7 @@ The plugin extracts messages from LangChain's `gen_ai.prompt` and `gen_ai.comple
 **Implementation details**:
 - Uses LangChain's built-in OpenTelemetry instrumentation (no monkey-patching)
 - Environment variables activate automatic tracing for all LangChain components
-- Custom `LangChainSpanExporterWrapper` adds `kind="ai"` attribute and normalizes messages
+- Custom `LangChainSpanExporterWrapper` adds `type="ai"` attribute and normalizes messages
 - Extracts messages from `gen_ai.prompt` and `gen_ai.completion` and converts to OpenAI format
 - Cleanup restores original environment variables
 - Works with LangChain, LangGraph, and all LangChain integrations
@@ -333,7 +333,7 @@ def database_plugin(instance: LogzAI, config: Optional[dict] = None):
     @event.listens_for(engine, "before_cursor_execute")
     def log_query(conn, cursor, statement, parameters, context, executemany):
         with instance.span("database.query") as span:
-            span.set_attribute("kind", "database")
+            span.set_attribute("type", "database")
             span.set_attribute("db.statement", statement)
             instance.info("Executing query", query=statement[:100])
 
