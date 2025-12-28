@@ -1,4 +1,4 @@
-from .main import LogzAI, logzai
+from .main import LogzAI, logzai, LogzAIHandler
 from .plugins import (
     LogzAIPlugin,
     CleanupFunction,
@@ -12,6 +12,7 @@ from .plugins import (
 __all__ = [
     "LogzAI",
     "logzai",
+    "LogzAIHandler",
     "LogzAIPlugin",
     "CleanupFunction",
     "PluginEntry",

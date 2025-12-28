@@ -419,8 +419,78 @@ class LogzAI(LogzAIBase):
         self._shutdown_plugins()
 
 
+class LogzAIHandler(logging.Handler):
+    """A logging handler that sends logs to LogzAI via OpenTelemetry.
+
+    This handler can be used with Python's standard logging module to send
+    logs to LogzAI without using the logzai singleton methods.
+
+    Example:
+        logzai.init(ingest_token="...", ingest_endpoint="...")
+
+        logging.basicConfig(
+            level=logging.INFO,
+            handlers=[LogzAIHandler()],
+            force=True,
+        )
+
+        logging.info("This goes to LogzAI")
+    """
+
+    def __init__(self, level: int = logging.NOTSET):
+        """Initialize the LogzAI handler.
+
+        Args:
+            level: Minimum logging level to handle
+
+        Raises:
+            RuntimeError: If LogzAI not initialized via logzai.init()
+        """
+        super().__init__(level)
+
+        # Get the singleton instance to access the log provider
+        if not logzai.log_provider:
+            raise RuntimeError(
+                "LogzAI not initialized. Call logzai.init(...) before creating LogzAIHandler."
+            )
+
+        # Create an internal OpenTelemetry LoggingHandler
+        self._otel_handler = LoggingHandler(
+            level=level,
+            logger_provider=logzai.log_provider
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Emit a log record to LogzAI.
+
+        Args:
+            record: The log record to emit
+        """
+        try:
+            # Handle exception information if present
+            if record.exc_info:
+                exc_type, exc_value, exc_tb = record.exc_info
+                if exc_type is not None:
+                    # Add exception info to the record's extra data
+                    if not hasattr(record, 'is_exception'):
+                        setattr(record, 'is_exception', True)
+                    if not hasattr(record, 'exception.type'):
+                        setattr(record, 'exception.type', exc_type.__name__)
+                    if not hasattr(record, 'exception.message'):
+                        setattr(record, 'exception.message', str(exc_value))
+                    if not hasattr(record, 'exception.stacktrace'):
+                        setattr(record, 'exception.stacktrace', ''.join(
+                            traceback.format_exception(exc_type, exc_value, exc_tb)
+                        ))
+
+            # Forward to the OpenTelemetry handler
+            self._otel_handler.emit(record)
+        except Exception:
+            self.handleError(record)
+
+
 # Create singleton instance
 logzai = LogzAI()
 
 # Export the class for direct instantiation
-__all__ = ["LogzAI", "logzai"]
+__all__ = ["LogzAI", "logzai", "LogzAIHandler"]
